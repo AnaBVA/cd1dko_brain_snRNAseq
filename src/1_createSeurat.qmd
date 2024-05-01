@@ -1,0 +1,49 @@
+---
+title: "Mouse snSeq"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(zellkonverter)
+library(SingleCellExperiment)
+library(tidyverse)
+library(Seurat)
+```
+
+
+# Read data
+
+Data shared by Dawn on Oct, 2023 into `SingleCellExperiment`.
+
+```{r}
+sc <- readH5AD(here::here("data/m_single_nuc/230920_10x_all_merged_adata_all_samples_merged.h5ad"))
+sc
+```
+
+Add the data back to SCE
+
+```{r}
+df <- colData(sc) %>% 
+  as.data.frame() %>% 
+  as_tibble() %>% 
+  separate(assignment, c("mouse", "treatment","id"),sep = "_") 
+
+sc$mouse <- df$mouse
+sc$treatment <- df$treatment
+sc$id <- df$id
+```
+
+
+# Create Seurat obj
+
+```{r}
+seurat <- as.Seurat(sc, counts = "X", data = NULL)
+write_rds(seurat, here::here("output/rds/1_seurat.RDS"))
+```
+

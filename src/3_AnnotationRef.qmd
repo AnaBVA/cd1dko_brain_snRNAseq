@@ -1,0 +1,258 @@
+---
+title: "Cluster Annotation: Mouse snSeq"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(Seurat)
+library(dittoSeq)
+```
+
+###
+Here you'll find: 
+
+* Annotation using transfer anchors between the reference and our dataset.
+
+* Annotation levels are defined based on the prediction score. 
+
+* Different annotation levels are created
+
+###
+
+
+
+# Read data
+
+
+Data formated in a seurat object by `2_SeuratPipeline.qmd` file
+
+```{r}
+seurat <- readRDS( here::here("output/rds/2_seurat.RDS"))
+Idents(seurat) <- "RNA_snn_res.0.2"
+```
+
+
+Read reference dataset (Dawan shared it)
+
+```{r}
+srtref <- readRDS("~/Documents/Postdoc/Analysis/hu_ca/data/srtref.rds")
+Idents(srtref) <- "annotation_1"
+```
+
+```{r}
+UMAPPlot(srtref,label = T) + NoLegend()
+```
+
+```{r, eval=T}
+anchors <- FindTransferAnchors(reference = srtref,
+                               query = seurat,
+                               dims = 1:30,
+                               reference.reduction = "pca")
+
+predictions <- TransferData(anchorset = anchors,
+                            refdata = srtref$annotation_1,
+                            dims = 1:30
+                            )
+```
+
+
+Check prediction scores
+
+```{r}
+colnames(predictions)[1] <- "predicted.output"
+predictions <- predictions[,c("predicted.output", "prediction.score.max")]
+seurat <- AddMetaData(seurat, metadata = predictions)
+
+# Check prediction scores
+summary(predictions$prediction.score.max)
+hist(predictions$prediction.score.max)
+table(predictions$prediction.score.max > median(predictions$prediction.score.max))
+
+# Remove labels for poor predicted cells
+predictions <- predictions %>% 
+  mutate(predicted.id = case_when(predictions$prediction.score.max > .6 ~ predicted.output,
+                                  TRUE ~ "Unknown"))
+
+# Save labels in Seurat obj
+seurat <- AddMetaData(seurat, metadata = predictions)
+
+# Annotate each cluster based on the max num of cells predicted
+labels <- table(seurat$predicted.id, seurat$RNA_snn_res.0.2) %>% 
+  as.data.frame() %>% 
+  as_tibble() %>%
+  dplyr::rename(celltype = Var1, cluster = Var2) %>% 
+  group_by( cluster) %>% 
+  slice_max( order_by = Freq, n = 3) %>% 
+  filter(Freq != 0 ) %>% 
+  mutate(celltype = case_when(dplyr::first(celltype) %in% c("Unknown", "Unk_1", "Unk_2", "LowQ_1") ~ paste0(celltype, collapse = ":"),
+                              TRUE ~ celltype),
+         prop = paste0(Freq, collapse = ":")) %>% 
+  slice_max( order_by = Freq, n = 1) %>% 
+  mutate(cluster = str_c("C", cluster, sep = "" )) %>% 
+  mutate(celltype = str_c(cluster, celltype, sep = "-" ))
+  # filter(Freq == max(Freq)) 
+  # pivot_wider(names_from = cluster, values_from = Freq) 
+
+seurat$celltype <- seurat$RNA_snn_res.0.2
+levels(seurat$celltype) <- labels$celltype
+table(seurat$celltype)
+```
+
+
+
+
+Bar plots
+
+```{r}
+# cluster id
+dittoSeq::dittoBarPlot(seurat,"celltype", group.by = "condition")
+dittoSeq::dittoBarPlot(seurat,"celltype", group.by = "id", retain.factor.levels = T) 
+
+```
+
+
+
+```{r, fig.height= 12, fig.width=12}
+dittoFreqPlot(seurat, "celltype",
+    sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
+
+dittoFreqPlot(seurat, "predicted.id",
+    sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
+
+```
+
+# Levels of annotation
+
+```{r}
+seurat$celltype <-  gsub("C17-LowQ_1:Unknown:Astro_WM:Endo", "C17-PeriFib_1:Perivascular_Fibroblast", seurat$celltype)
+seurat$celltype <-  gsub("C18-LowQ_1:Unknown", "C18-ChoPlexEpi_1:Choroid_plexus_Epithelial", seurat$celltype)
+seurat$celltype <-  gsub("C19-Unknown:LowQ_1:Astro_WM", "C19-Epend_1:Ependymal", seurat$celltype)
+
+
+brain_literature_markers <- seurat$celltype %>% 
+  as_tibble() %>% 
+  unique() %>% 
+  mutate(Level_4 = value) %>% 
+  separate(value, c("cluster", "names"), sep = "-") %>% 
+  mutate(names = gsub("Unknown:", "", names),
+         names = gsub("Unk_1:", "", names)
+         ) %>% 
+  mutate(Level_3 = names) %>% 
+  mutate(names = gsub("LowQ_1:", "", names)) %>% 
+  separate(names, c("Level_2"), sep = "_") %>% 
+  mutate(Level_1 = case_when(Level_2 %in% c("Ext", "Inh") ~ "Neuron",
+                             Level_2 %in% c("Endo", "PeriFib", "ChoPlex") ~ "Stroma",
+                             Level_2 == "LowQ" ~ "Other",
+                             TRUE ~ "Glia"))
+  
+```
+
+```{r}
+seurat$Level_4 <- seurat$celltype
+metadata_tmp <- seurat@meta.data %>% 
+  left_join(brain_literature_markers, by = "Level_4" ) 
+
+seurat@meta.data$Level_1 <- metadata_tmp$Level_1
+seurat@meta.data$Level_2 <- metadata_tmp$Level_2
+seurat@meta.data$Level_3 <- metadata_tmp$Level_3
+seurat@meta.data$Level_4 <- metadata_tmp$Level_4 %>% factor(. , levels = brain_literature_markers$Level_4)
+
+seurat <- AddMetaData(seurat, metadata = seurat@meta.data[, c("celltype", "Level_1", "Level_2", "Level_3", "Level_4")])
+
+DimPlot(seurat, label = T,
+        group.by  = "Level_2", 
+       ) & NoAxes() +
+  theme(legend.position = "none")
+
+DimPlot(seurat, label = T,
+        group.by  = "Level_3", 
+       ) & NoAxes() +
+  theme(legend.position = "none")
+
+DimPlot(seurat, label = T,
+        group.by  = "Level_4", 
+       ) & NoAxes() +
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+# prediction celltypes
+dittoSeq::dittoBarPlot(seurat,"Level_1", group.by = "condition", legend.show = F) +ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) +
+dittoSeq::dittoBarPlot(seurat,"Level_1", group.by = "id", retain.factor.levels = T) +
+  ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) 
+
+dittoFreqPlot(seurat, "Level_1",
+    sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
+
+# prediction celltypes
+dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "condition", legend.show = F) +
+dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "id", retain.factor.levels = T) +
+  geom_vline(xintercept = c( 2.5), lwd = 1, color="black")
+
+dittoFreqPlot(seurat, "Level_2",
+    sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
+
+
+dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "condition", legend.show = F) +
+dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "id", retain.factor.levels = T) 
+
+dittoFreqPlot(seurat, "Level_3",
+    sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
+
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = F) +
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = T, scale = "count") 
+
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = F) +
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "id", retain.factor.levels = T) +
+  geom_vline(xintercept = c( 2.5), lwd = 1, color="black")
+
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "id", legend.show = F,
+                       retain.factor.levels = T, scale = "count") +
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "id", retain.factor.levels = T) 
+
+dittoFreqPlot(seurat, "Level_4",
+    sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
+```
+
+
+```{r}
+library(ggalluvial)
+
+table(seurat@meta.data[,c("Level_1", "Level_2", "Level_4")]) %>% 
+  as.data.frame() %>% 
+  filter(Freq!=0) %>% mutate(Freq = log(Freq)) %>% 
+  ggplot(aes(axis1 = Level_1, 
+             axis2 = Level_2, 
+             axis3 = Level_4,
+             y = Freq)) +
+    geom_alluvium(aes(fill = Level_1), 
+                decreasing = F) +
+    geom_text(stat = "stratum", 
+            decreasing = F, 
+            aes(label = after_stat(stratum), size = 24)) +
+    theme_void() + xlim(c(1,4)) +
+  ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) +
+    NoLegend()
+
+```
+
+
+# Save object
+
+```{r}
+saveRDS(seurat, here::here("output/rds/3_seurat_annotation.RDS"))
+```
+
+
+
+
+

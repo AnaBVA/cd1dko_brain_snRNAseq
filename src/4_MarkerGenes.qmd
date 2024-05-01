@@ -1,0 +1,345 @@
+---
+title: "Clusters: Mouse snSeq"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(Seurat)
+library(dittoSeq)
+library(scCustomize)
+library(DT)
+```
+
+###
+Here you'll find:
+
+* SCTransform normalization is performed, and marker genes are identified using the PrepSCTFindMarkers function.
+
+* Top marker genes for each cluster are visualized and saved. 
+
+* Literature-based marker genes are checked
+
+###
+
+
+# Read data
+
+Data formated in a seurat object by `2_SeuratPipeline.qmd` file
+
+```{r}
+seurat <- readRDS( here::here("output/rds/3_seurat_annotation.RDS"))
+Idents(seurat) <- "Level_2"
+```
+
+
+# Cluster markers
+
+```{r}
+options(future.globals.maxSize = 3e+09)
+seurat[["RNA"]] <- split(seurat[["RNA"]], f = seurat$id)
+seurat <- SCTransform(seurat, conserve.memory = T, ncells = 1000)
+seurat <- PrepSCTFindMarkers(seurat)
+```
+
+
+
+```{r eval=T}
+
+# find markers for every cluster compared to all remaining cells
+# this step takes long time
+Idents(seurat) <- "Level_4"
+seurat.markers <- FindAllMarkers(seurat, 
+                                 only.pos = T, 
+                                 min.pct = 0.25, 
+                                 logfc.threshold = 0.25)
+
+
+top2 <- seurat.markers %>%
+    group_by(cluster) %>%
+    slice_head(n = 4)
+
+DoHeatmap(seurat, features = top2$gene, group.by = "Level_2") + NoLegend()
+
+DotPlot(seurat, features = unique(top2$gene), cluster.idents = T, group.by = "Level_4", ) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+scCustomize::Clustered_DotPlot(seurat_object = seurat, 
+                               features = unique(top2$gene),  x_lab_rotate = 90,
+                               group.by = "Level_4", flip = F
+                               ) 
+
+write_excel_csv(seurat.markers, here::here("output/tables/4_markers_Level_4.xls"))
+saveRDS(seurat, here::here("output/rds/4_seurat_SCTnorm.RDS"))
+
+```
+
+
+
+```{r}
+htmltools::tagList(
+lapply(unique(seurat.markers$cluster), function(i){
+  datatable(seurat.markers[which(seurat.markers$cluster == i),])
+  })
+)
+```
+
+Using FindConservedMarkers 
+
+```{r}
+# Idents(seurat) <- "Level_4"
+# # Create function to get conserved markers for any given cluster
+# get_conserved <- function(cluster){
+#         FindConservedMarkers(seurat,
+#                              ident.1 = cluster,
+#                              grouping.var = "id",
+#                              only.pos = TRUE) %>%
+#                 rownames_to_column(var = "gene") %>%
+#                 cbind(cluster_id = cluster, .)
+# }
+# 
+# # Iterate function across desired clusters
+# conserved_markers <- map_dfr(unique(seurat$Level_4), get_conserved)
+# 
+# top2.conserved <- conserved_markers %>%
+#     group_by(cluster_id) %>% 
+#   slice_head(n = 2)
+# 
+# DoHeatmap(seurat, features = top2.conserved$gene) + NoLegend()
+# 
+# write_excel_csv(conserved_markers, here::here("output/tables/3_conserved_markers_Level_4_2024-04-23.RDS"))
+```
+
+
+# TSNE plot
+
+```{r}
+DimPlot(seurat, 
+        label = F, reduction = "tsne", 
+        cols = scCustomize::DiscretePalette_scCustomize(num_colors = 40, palette = "ditto_seq"),
+        group.by  = "Level_2") & NoAxes()  +
+  theme(legend.position = "top")
+
+
+DimPlot(seurat, 
+        label = T, reduction = "tsne", 
+        cols = scCustomize::DiscretePalette_scCustomize(num_colors = 40, palette = "ditto_seq"),
+        group.by  = "Level_4") & NoAxes()  +
+  theme(legend.position = "top")
+```
+
+
+
+# Literature based markers
+
+Ependymal cells reference: https://www.cell.com/cell/pdf/S0092-8674(18)30395-7.pdf 
+Peri https://www.nature.com/articles/s41586-021-04369-3#MOESM2
+
+```{r}
+markers <- c(
+  "P2ry12", "Sall1", "Ctss", "C1qb", "Cx3cr1", # Microglia 
+  "Folr1", "Prlr", "Ttr",  # Choroid plexus
+  "Ccr2", 
+  "Foxj1", "Acta2", "Tuba1a", "Ccdc153", # Ependymal cells
+  "Cntn1", "Tnr", "Vcan", "Pdgfra", # OPC
+  "Plp1", "Mog", "Mbp", "Mal", # Oligodendrocyte
+  "Gfap", "Aqp4", "Gja1", "Slc1a3", "Clu", "Slc1a2", # Astrocytes
+  "Bsg", "Flt1", "Itm2a", "Ifitm1", "Apold1",  "Pecam1", # Endothelial
+  "Snap25",  "Rbfox1", "Grin1", # Neuron 
+  "Dcx", "Hs3st2", #  Excitatory Neuron 
+  "Gad1", "Gad2", # Interneurons 
+  "Grin2b",
+  "Ptprc", "Runx1", # Immune
+  "Cemip","Bicc1","Flrt2", "Lama2" # Perivascular_Fibroblast
+) %>% 
+  unique()
+
+DotPlot(seurat, features = markers, cluster.idents = T, group.by = "Level_2") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+scCustomize::Clustered_DotPlot(seurat_object = seurat, 
+                               features = markers,  x_lab_rotate = 90,
+                               group.by = "Level_4", k = 10, flip = F
+                               ) 
+```
+
+
+Dawn's markers from Fei's lab
+
+```{r}
+markers <- c(
+ 
+#Excitatory neurons, amygdala
+"Nrgn", "C1ql3", "Olfm1", "Rtn1", "Cck", "Mef2c", "Calm2", "Chgb", "Ywhah", "Ctxn1",
+#Excitatory neurons, cerebral cortex
+"Meg3", "Snhg11", "Rian", "R3hdm1", "Kcnq1ot1", "Grin2a", "Snhg14", "Grin2b", "Syt7", "Ahi1",
+"Dcx", "Hs3st2", #  Excitatory Neuron 
+"Gad1", "Gad2", # Interneurons
+#Astrocytes
+"Slc1a3", "Apoe", "Aldoc", "Plpp3", "Atp1a2", "Slc1a2", "Ntsr2", "Gja1", "Mt1", "Bcan",
+#R-LM border Cck interneurons
+"Tnr", "Mbp",
+#Mature oligodendrocytes
+"Plp1", "Mal", "Cnp", "Mag", "Trf", "Mobp", "Cldn11", "Mbp", "Cryab", "Ermn",
+"Cntn1", "Tnr", "Vcan", "Pdgfra", # OPC
+#Dz medium spiny neurons", "striatum
+"Penk", "Pde10a", "Gpr88", "Tac1", "Rgs9", "Adcy5", "Ppp1r1b", "Pde1b", "Rasd2", "Scn4b",
+#Microglia", "activated
+"Hexb", "C1qa", "C1qb", "Ctss", "C1qc", "Cx3cr1", "Csf1r", "P2ry12", "Ctsd", "Tyrobp",
+#Choroid plexus epithelial cells
+"Ttr", "Enpp2", "Ecrg4", "Folr1", "2900040C04Rik", "Prlr", "Igfbp2", "Sostdc1", "Kcnj13","Calml4",
+#Vascular endothelial cells", "venous
+"Cldn5", "Ly6c1", "Flt1", "Ly6a", "Slco1a4", "Itm2a", "Cxcl12", "Bsg", "Pltp", "Ptprb",
+#Vascular smooth muscle cells", "arterial
+"Acta2", "Crip1", "Tagln", "Tpm2", "Myl9", "Myh11", "Igfbp7", "Myl6", "Vim", "Mylk",
+#Ependymal cells
+"Rarres2", "Dbi", "Tmem212", "Ccdc153", "Plac9b", "Fam183b", "Mia", "1700094D03Rik","Plac9a", "Dynlrb2",
+#Red Blood Cells / Other
+"Hba-a1", "Hbb-bs", "Hbb-bt", "Hba-a2", "Alas2", "Bpgm", "Isg20", "Ube2l6", "Tent5c","Rec114",
+#Pericytes and Vascular leptomeningeal
+"Ptgds", "Vtn", "Apod", "Mgp", "Dcn", "Ifitm1", "Igf2", "Col1a2", "Rgs5", "Nupr1",
+"Cemip","Bicc1","Flrt2", "Lama2", # Perivascular_Fibroblast
+#Neuronal intermediate progenitor cells
+"Hist1h2ap", "Hmgb2", "Sox11", "Ccnd2", "Hmgn2", "Tubb2b", "Igfbpl1", "Sox4", "Dlx6os1","Ppp1r14b",
+#Perivascular macrophages
+"Lyz2", "Cd74", "Pf4", "Mrc1", "Selenop", "H2-Eb1", "C1qa", "H2-Ab1", "Fcer1g", "Stab1"
+) %>% 
+  unique()
+
+
+scCustomize::Clustered_DotPlot(seurat_object = seurat, 
+                               features = markers, cluster_feature = F, x_lab_rotate = 90,
+                               group.by = "Level_4",  flip = T
+                               ) 
+
+```
+
+
+
+```{r}
+DotPlot(seurat, 
+        features = markers, 
+        group.by = "Level_1",
+        cluster.idents = F 
+        ) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+DotPlot(seurat, 
+        features = markers, 
+        group.by = "Level_2",
+        cluster.idents = F 
+        ) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+DotPlot(seurat, 
+        features = markers, 
+        group.by = "Level_3",
+        cluster.idents = F 
+        ) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+DotPlot(seurat, 
+        features = markers, 
+        group.by = "Level_4",
+        cluster.idents = F 
+        ) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+
+[Chang, C., Zuo, H., & Li, Y. (2023). Recent advances in deciphering hippocampus complexity using single-cell transcriptomics. Neurobiology of Disease, 106062.](https://www.sciencedirect.com/science/article/pii/S0969996123000761)
+
+
+```{r}
+markers <- c(
+  "Snap25", ## Synaptosomal Neuron
+  "Grin2b", # Glutamate receptor Neuron
+  "Neurod2", "Slc17a7", # Excitatory Neuron
+  "Gad1", "Csf1r", # Inhibitory Neuron
+  "Cx3cr1", "Aif-1", "Gfap", "Aqp4", "Aldh1l1",  # Microglia
+  "Aldo", "Sox9", "Slc1a3", "Gjb6", "Mbp", "Plp1", "Mog", # Astrocyte
+  "Mag", "Ermn", "Mobp", "Pdgfra", # Oligodendrocyte
+  "Vcan", "Cspg4", "Olig2" # Oligodendrocyte precursor cell (OPC)
+)
+
+DotPlot(seurat, features = markers, cluster.idents = T, group.by = "Level_2") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+VlnPlot(seurat, features = markers, pt.size = 0,  stack = T)
+dittoHeatmap(seurat, 
+             markers[markers %in% rownames(seurat)],
+             scale = "column", 
+             cluster_rows = F,
+             annot.by = c("Level_2", "condition"))
+
+```
+
+
+[Li Xuan, 2022](https://jneuroinflammation.biomedcentral.com/articles/10.1186/s12974-022-02447-5#Sec6)
+
+```{r}
+markers <- c(
+"Cx3cr1", "Sall1", "P2ry12", "Fcrls", "Tmem119",
+"Ccr2", "Fn1", "Cybb", "Pf4", "Ms4a7",
+"Cxcr2", "S100a8", "Camp", "Ly6g",
+"Flt3", "Cd209a", "Xcr1", "Ccr7", "Ccr9",
+"Ncr1", "Klre1",
+"Cd3e", "Lat", "Cd8b1", "Cd4",
+"Cd19", "Ms4a1", "Cd79a",
+"Gata3", "IL1rl1"
+)
+
+DotPlot(seurat, features = markers, cluster.idents = T, group.by = "Level_2") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+VlnPlot(seurat, features = markers, pt.size = 0,  stack = T)
+dittoHeatmap(seurat, 
+             markers[markers %in% rownames(seurat)],
+             scale = "column", 
+             cluster_rows = F,
+             annot.by = c("RNA_snn_res.0.2", "condition"))
+
+```
+
+
+[Garza Raquel, 2023](https://www.cell.com/cell-reports/fulltext/S2211-1247(23)01407-9)
+
+```{r}
+markers <- c(
+  "P2ry12", "Fyb1", "Itgax", " Ctss", " C1qb", "Cx3cr1",
+  "Pmp2", "Col9a1", "Col6a1", "Vcan", "Pdgfra",
+  "Plp1", "Mog", "Mbp",
+  "Gfap", "Aqp4", "Gja1", "Slc1a3",
+  "Bsg", "Flt1", "Lum", "Tpm1",
+  "Dcx", "Rbfox1", "Grin1", "Hs3st2", "Gad1", "Gad2", "Calb2", "Cnr1",
+  "Dcx", "Rbfox1", "Grin1", "Hs3st2"
+) %>% 
+  unique()
+
+DotPlot(seurat, 
+        features = markers, 
+        group.by = "Level_2",
+        cluster.idents = T 
+        ) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+VlnPlot(seurat, features = markers, pt.size = 0,  stack = T)
+dittoHeatmap(seurat, 
+             markers[markers %in% rownames(seurat)],
+             scale = "column", 
+             cluster_rows = F,
+             annot.by = c("RNA_snn_res.0.2", "condition"))
+
+```
+

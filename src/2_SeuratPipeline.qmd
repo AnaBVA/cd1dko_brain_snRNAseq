@@ -1,0 +1,372 @@
+---
+title: "QC: Mouse snSeq"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(Seurat)
+library(harmony)
+library(gt)
+library(gprofiler2)
+library(DoubletFinder)
+library(dittoSeq)
+# library(scSHC)
+```
+
+
+###
+In this `qmd`, you'll find: 
+
+* General overviews of brain samples are generated, including summary statistics such as cell counts, median gene counts, and median counts per sample.
+
+* Quality control metrics. 
+
+* Gene filtering criteria.
+
+* Integration of datasets performed using Seurat's pipeline and Harmony, including normalization, identification of highly variable features, and scaling.
+
+###
+
+# Read data
+
+Data formated in a seurat object by `1_createSeurat.qmd` file
+
+```{r}
+seurat <- readRDS( here::here("output/rds/1_seurat.RDS"))
+seurat <- RenameAssays(seurat, originalexp = "RNA")
+```
+
+
+# Filter unhashed samples
+
+For analyzing the data, we want to use only mouse samples that were hashed and preprocessed at the same time 
+
+```{r}
+Idents(seurat) <- "id"
+seurat <- subset(seurat, idents =  c("CA223", "CA207", "CA218", "CA235"))
+
+```
+
+
+General overview of brain samples 
+
+
+```{r}
+seurat@meta.data %>% 
+  group_by(id) %>% 
+  summarise(
+    mouse = unique(mouse),
+    treatment = unique(treatment),
+    id = unique(id),
+    # condition = unique(condition),
+    n_cells = n(),
+    median_genes = median(n_genes) , 
+    median_counts = median(n_counts), 
+    median_hto_counts = median(hto_counts)
+  ) %>% 
+  ungroup() %>% 
+  select(-id) %>% 
+  gtsummary::tbl_summary(by = mouse, 
+                         missing = "no",
+                         type = c(median_genes = "continuous",
+                                  median_counts = "continuous",
+                                  median_hto_counts = "continuous"
+                                  ))
+
+
+```
+
+
+
+# Cells per sample
+
+```{r}
+table(seurat$id)
+
+df <- seurat@meta.data %>% 
+  group_by(id) %>% 
+  summarise(
+    treatment = unique(treatment),
+    mouse = unique(mouse),
+    id = unique(id),
+    # condition = unique(condition),
+    n_cells = n(),
+    median_genes = median(nFeature_originalexp) , 
+    max_genes = max(nFeature_originalexp) , 
+    median_counts = median(nCount_originalexp),
+    max_counts = max(nCount_originalexp)
+  ) %>% 
+  arrange(treatment, mouse, desc(n_cells) )
+  
+  
+df %>% 
+  gt::gt() |>  
+  tab_row_group(label = "", 
+                rows = which(df$treatment == "CA")) 
+
+
+# Order samples in seurat obj
+seurat$id <- factor(seurat$id, levels = df$id)
+
+```
+
+
+# QC
+
+General QC was done by Dawn and it is on `230920_10x_all_merged_CA_nuclei_demux_dawn-all_samples.ipynb` file. 
+
+Here, we plot QC figures
+
+```{r}
+Idents(seurat) <- "id"
+seurat[["percent.mt"]] <-  PercentageFeatureSet(seurat, pattern = "^MT-")
+VlnPlot(seurat, 
+        pt.size = 0,
+        features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+        ncol = 3)
+
+```
+
+
+
+```{r}
+FeatureScatter(seurat, feature1 = "nCount_RNA", feature2 = "percent.mt")
+FeatureScatter(seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+
+```
+# Filter genes
+
+There is no mitocondrial genes.
+
+Cells with at least 200 detected genes and genes need to be expressed in at least 10 cell
+
+```{r}
+selected_cells <- WhichCells(seurat, expression = nFeature_RNA > 350)
+selected_features <- rownames(seurat)[Matrix::rowSums(seurat) > 10]
+
+dim(seurat)
+seurat <- subset(seurat, features = selected_features, cells = selected_cells)
+dim(seurat)
+
+VlnPlot(seurat, 
+        pt.size = 0,
+        features = c("nFeature_RNA", "nCount_RNA"), 
+        ncol = 2)
+```
+
+```{r}
+table(seurat$id)
+
+df <- seurat@meta.data %>% 
+  group_by(id) %>% 
+  summarise(
+    treatment = unique(treatment),
+    mouse = unique(mouse),
+    id = unique(id),
+    # condition = unique(condition),
+    n_cells = n(),
+    median_genes = median(nFeature_originalexp) , 
+    median_counts = median(nCount_originalexp)
+  ) %>% 
+  arrange(treatment, mouse, desc(n_cells) )
+  
+df %>% 
+  gt::gt() |>  
+  tab_row_group(label = "", 
+                rows = which(df$treatment == "CA")) 
+
+```
+
+
+
+# Cell cycle score
+
+```{r}
+# A list of cell cycle markers for human, from Tirosh et al, 2015, is loaded with Seurat.  We can
+str(cc.genes)
+
+# Convert to mouse genes with gprofiler2
+s.genes = gorth(cc.genes$s.genes, 
+               source_organism = "hsapiens", 
+               target_organism = "mmusculus")$ortholog_name
+
+g2m.genes = gorth(cc.genes$g2m.genes, 
+                 source_organism = "hsapiens", 
+                 target_organism = "mmusculus")$ortholog_name
+
+```
+
+
+```{r}
+seurat <- CellCycleScoring(object = seurat, 
+                              g2m.features = g2m.genes,
+                              s.features = s.genes)
+
+head(seurat[[]])
+VlnPlot(seurat, features = c("S.Score", "G2M.Score"), ncol = 2, pt.size = 0.1, group.by = "Phase")
+
+# Visualize the distribution of cell cycle markers across
+VlnPlot(seurat, features = c("Pcna",  "Top2a", "Mcm6",  "Mki67"), 
+          group.by = "Phase",
+          ncol = 2)
+
+RidgePlot(seurat, features = c("Pcna", "Top2a", "Mcm6", "Mki67"), ncol = 2)
+seurat$CC.Difference <- seurat$S.Score - seurat$G2M.Score
+```
+
+# Doublets
+ 
+ 
+Predict doublets with scDblFinder
+
+```{r}
+library(BiocParallel)
+library(scDblFinder)
+
+sce <- as.SingleCellExperiment(seurat)
+
+sce <- scDblFinder(sce, samples="id", BPPARAM=MulticoreParam(2))
+table(sce$scDblFinder.class)
+
+seurat$scDblFinder.class <-  sce$scDblFinder.class
+
+table(seurat$scDblFinder.class)
+table(seurat$scDblFinder.class, seurat$id)
+
+scater::plotColData(sce, x="id", y="scDblFinder.class")
+# VlnPlot(seurat, features = "nFeature_RNA", group.by = scDblFinder.class, pt.size = 0.1)
+
+seurat <- subset(seurat, scDblFinder.class == "singlet")
+
+```
+
+
+
+
+# Seurat pipeline for integrate datasets
+
+```{r}
+seurat <- UpdateSeuratObject(seurat)
+seurat[["RNA"]] <- split(seurat[["RNA"]], f = seurat$id)
+
+# Normalization
+seurat <- NormalizeData(seurat)
+# Higlhy variable features by samples
+seurat <- FindVariableFeatures(seurat, selection.method = "vst", nfeatures = 2000)
+seurat <- ScaleData(seurat)
+```
+
+
+# Dimentional reduction
+
+```{r}
+seurat <- RunPCA(seurat)
+VizDimLoadings(seurat, dims = 1:2, reduction = "pca")
+DimPlot(seurat, reduction = "pca")
+DimHeatmap(seurat, dims = 1:6, cells = 500, balanced = TRUE)
+ElbowPlot(seurat, ndims = 50)
+
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "pca")
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+```
+
+
+# Harmony
+
+```{r}
+seurat <- IntegrateLayers(
+  object = seurat, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE
+)
+
+seurat <- FindNeighbors(seurat, dims = 1:30, reduction = "harmony")
+seurat <- FindClusters(seurat, resolution = c(0.2, 0.5, 1))
+seurat <- RunUMAP(seurat, dims = 1:30, reduction = "harmony", reduction.name = "umap.harmony")
+```
+
+
+```{r}
+ DimPlot(
+  seurat,
+  reduction = "umap.unintegrated",
+  group.by ="id"
+) +
+   DimPlot(
+  seurat,
+  reduction = "umap.harmony",
+  group.by =  "id"
+)
+```
+
+
+# Cluster cells
+
+```{r}
+clust_info <- table(seurat$RNA_snn_res.0.5, seurat$id, seurat$condition) %>% 
+  as.data.frame() %>% 
+  as_tibble() %>% 
+  filter(Freq != 0) %>% 
+  pivot_wider(names_from = Var1, values_from = Freq) 
+
+clust_info %>% gt::gt()
+
+colors <- as.data.frame(clust_info[,2])
+clust_info %>% 
+  select(-c(1,2)) %>% 
+  as.matrix(., rownames.force = T) %>% 
+  # log10() %>%
+  pheatmap::pheatmap(., annotation_row = colors)
+
+```
+
+# Test clusters
+
+```{r}
+# clusters <- scSHC(seura@assays$RNA$counts)
+# new_clusters <- testClusters(seurat@assays$RNA@counts,
+#                              as.character(seurat$RNA_snn_res.0.2))
+```
+
+
+# TSNE plot
+
+```{r}
+seurat <- RunTSNE(seurat, dims = 1:30, reduction = "harmony", reduction.name = "tsne")
+DimPlot(seurat, reduction = "tsne", group.by = "condition")
+DimPlot(seurat, reduction = "tsne", group.by = "batch", split.by = "condition")
+DimPlot(seurat, reduction = "tsne", split.by = "batch", group.by = "condition")
+DimPlot(seurat, reduction = "tsne", group.by = "treatment", split.by = "mouse", shuffle = T)
+DimPlot(seurat, reduction = "tsne", group.by = "RNA_snn_res.0.2", split.by = "condition", shuffle = T)
+```
+
+Bar plots
+
+```{r}
+dittoSeq::dittoBarPlot(seurat,"seurat_clusters", group.by = "condition")
+dittoSeq::dittoBarPlot(seurat,"seurat_clusters", group.by = "id", retain.factor.levels = T) +
+  geom_vline(xintercept = c( 4.5, 8.5, 10.5), lwd = 1, color="black")
+
+dittoFreqPlot(seurat, "seurat_clusters",
+    sample.by = "id", 
+    group.by = "condition", 
+    split.adjust = list(scales = "free") )
+
+```
+
+
+# Save object
+
+```{r}
+seurat <- JoinLayers(seurat)
+write_rds(seurat, here::here("output/rds/2_seurat.RDS"))
+```
+
+

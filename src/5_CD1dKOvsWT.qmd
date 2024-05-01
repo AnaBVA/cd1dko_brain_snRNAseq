@@ -1,0 +1,336 @@
+---
+title: "Cd1dKO vs WT: Mouse snSeq"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(Seurat)
+library(gt)
+library(dittoSeq)
+library(EnhancedVolcano)
+library(DT)
+```
+
+###
+Here, you'll find: 
+
+* Differential Expression (DE) Analysis: DE analysis is performed between Cd1dKO and WT mice for each cell type using the FindMarkers function in Seurat. Volcano plots are generated to visualize the DE genes, and statistically significant DE genes are identified and saved.
+
+* Pathway Enrichment Analysis: Pathway enrichment analysis is conducted using Gene Set Enrichment Analysis (GSEA) with the clusterProfiler package. Hallmark gene sets from the Molecular Signatures Database (MSigDB) are used for pathway enrichment analysis. 
+
+
+###
+
+
+
+
+############################
+# Read data
+############################
+
+Data formated in a seurat object by `4_AnnotationRef.qmd` file
+
+```{r}
+seurat <- readRDS(here::here("output/rds/4_seurat_SCTnorm.RDS"))
+DefaultAssay(seurat) <- "RNA"
+seurat <- JoinLayers(seurat)
+```
+
+```{r, fig.width= 18, fig.height=20}
+seurat$celltype.stim <- paste( gsub("_", ".",seurat$Level_2 ), 
+                                     seurat$condition, 
+                                     sep = "_")
+
+DefaultAssay(seurat) <- "RNA"
+Idents(seurat) <- "celltype.stim"
+
+seurat$treatment <- factor(seurat$treatment, levels = c("sham", "CA"))
+celltype.unique <- gsub("_", ".",seurat$Level_2 ) %>% unique()
+```
+
+
+############################
+# DE WT vs CD1dKO
+############################
+
+Functions for DE
+
+```{r, fig.width= 18, fig.height=20}
+# DE using FindMarkers
+findmarkers.ca.de <- function(i, seurat, test.use = "wilcox", cond = "CA"){
+  wt.ca.de <- FindMarkers(seurat,
+                        ident.1 = str_c(i, "_CD1d", "_", cond),
+                        ident.2 = str_c(i, "_WT", "_", cond),
+                        min.cells.group = 1,  assay = "RNA", # change for SCT 
+                        test.use = test.use
+                        )
+}
+
+# Volcano plot
+volcano.ca.plot <- function(n, df = wt.de, cond = "CA", ...){
+  df.de <- df[[celltype.unique[n]]] 
+  cells <- table(seurat$celltype.stim) %>% 
+    as.data.frame() %>% 
+    as_tibble() %>% 
+    separate(Var1, c("Level_2", "mouse", "condition"), sep = "_") %>% 
+    filter(condition == cond, Level_2 == celltype.unique[n])
+  wt <- cells %>% filter(mouse == "WT")
+  cd1d <- cells %>% filter(mouse == "CD1d")
+  num.de <- df.de %>% filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5) %>% nrow()
+  
+  EnhancedVolcano(df.de, 
+                  title = str_c(cond ,": ", celltype.unique[n], "-", num.de, " DEG"), 
+                  subtitle = str_c("<- WT: ",wt[, "Freq"],  "  |  ", cd1d[, "Freq"],  ":CD1d ->"),
+                  lab = rownames(df.de), 
+                  pCutoff = 0.05, FCcutoff = 0.5,
+                  x = 'avg_log2FC', drawConnectors = T,
+                  y = 'p_val_adj', 
+                  ylab = bquote(~-Log[10] ~ italic(P.adj))) 
+}
+```
+
+# DE in single cell
+
+```{r, fig.width= 18, fig.height=20}
+# DE per cluster
+WTvsCD1dKO.ca.de <- lapply(celltype.unique, findmarkers.ca.de, 
+                           seurat = seurat,  cond = "CA")
+names(WTvsCD1dKO.ca.de) <- celltype.unique
+
+# Violin plot per cluster
+vp <- lapply(1:length(celltype.unique), volcano.ca.plot, df = WTvsCD1dKO.ca.de, cond = "CA")
+
+pdf(here::here("output/figs/volcano_CD1dvsWT_CA.pdf"), width = 18, height = 25)
+gridExtra::grid.arrange(grobs = vp)
+dev.off()
+
+# Get statistically significant DEGs
+DEG <-  lapply(1:length(celltype.unique), function(n){WTvsCD1dKO.ca.de[[n]] %>% 
+    filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5) %>% 
+    arrange(desc(avg_log2FC)) %>% 
+    mutate(gene = rownames(.))
+    })
+names(DEG) <- celltype.unique
+openxlsx::write.xlsx(DEG, file = here::here('output/tables/DEG_Cd1dKOvsWT_CA.xlsx'))
+
+```
+
+Volcano plot highlighting INTERFERON GAMMA RESPONSE genes
+
+```{r}
+library(msigdbr)
+
+# Get genes from pathway
+ifn_res = msigdbr(species = "mouse", category = "H") %>% 
+  filter(gs_name == "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+# Change color
+WTvsCD1dKO.ca.de$Micro$ifng_res <- "no"
+WTvsCD1dKO.ca.de$Micro[ifn_res$gene_symbol,]$ifng_res <- "IFNGresponse"
+
+volcano.ca.plot(7, df = WTvsCD1dKO.ca.de, cond = "CA", colCustom = "ifng_res")
+EnhancedVolcano(WTvsCD1dKO.ca.de$Micro, 
+                  #title = str_c(cond ,": ", celltype.unique[n], "-", num.de, " DEG"), 
+                  #subtitle = str_c("<- WT: ",wt[, "Freq"],  "  |  ", cd1d[, "Freq"],  ":CD1d ->"),
+                  lab = rownames(WTvsCD1dKO.ca.de$Micro), 
+                  pCutoff = 0.05, FCcutoff = 0.5,
+                  x = 'avg_log2FC', drawConnectors = T,  
+                selectLab = c("Tnf",ifn_res$gene_symbol, rownames(WTvsCD1dKO.ca.de$Micro)[1:20]), 
+                labSize = 6,
+                  y = 'p_val_adj',# colCustom = "ifng_res",
+                  ylab = bquote(~-Log[10] ~ italic(P.adj))) 
+
+
+
+```
+
+Bar plot for showing DEGs per cluster
+
+```{r}
+# DE from CA
+num.de.ca <- lapply(1:length(celltype.unique), function(n){DEG[[n]] %>% nrow})
+
+num.de.ca <- num.de.ca %>% 
+  unlist() %>% 
+  as_tibble() %>% 
+  mutate(celltype = WTvsCD1dKO.ca.de %>% names(),
+         DEG.CA = value,
+         color =  dittoSeq::dittoColors() %>% 
+           unique() %>% 
+           magrittr::set_names(WTvsCD1dKO.ca.de %>% names()) %>% .[1:length(celltype.unique)]) %>% 
+  dplyr::select(-value) %>% 
+  arrange(-DEG.CA) %>% 
+  mutate(celltype = factor(celltype, levels = celltype))
+
+df.levels <- table(seurat$Level_1, seurat$Level_2) %>% 
+  as.data.frame() %>% 
+  as_tibble() %>% 
+  filter(Freq !=0)%>% 
+  mutate(Var2 = gsub("_", ".",Var2))
+
+colnames(df.levels) <- c("Level_1", "celltype", "num_cells")
+
+num.de.ca %>% 
+  left_join(df.levels, by = "celltype") %>% 
+  mutate(celltype = factor(celltype, levels = celltype)) %>% 
+  ggplot(aes(x = celltype,y = DEG.CA, fill = Level_1)) +
+  geom_bar(stat = "identity", position = position_dodge2()) +
+  theme_classic() +
+  theme(legend.position = 'top') +
+  # scale_fill_manual(values = num.de.ca$color) +
+  ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) +
+  ylab("Number of DEG") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+num.de.ca %>% 
+  left_join(df.levels, by = "celltype") %>% 
+  ggplot(aes(x = log10(num_cells),y = log10(DEG.CA), label = celltype)) +
+  geom_point(aes(color = Level_1)) +
+  theme_classic() +
+  theme(legend.position = 'top') +
+  geom_text_repel() +
+  # scale_fill_manual(values = num.de.ca$color) +
+  ghibli::scale_color_ghibli_d("LaputaMedium", direction = -1) +
+  ylab("log10(Number of DEG)") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+############################
+# Pathway enrichment
+############################
+
+
+```{r}
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(msigdbr)
+library(SCPA)
+```
+
+```{r}
+deg.ca <- WTvsCD1dKO.ca.de
+
+geneList <- lapply(1:length(celltype.unique), function(i){
+    # Order by logFC
+    geneList <- deg.ca[[i]][,"avg_log2FC"]
+    names(geneList) <- rownames(deg.ca[[i]])
+    geneList <- sort(geneList, decreasing = T)
+
+    # Change to gene ID (ENTREZID)
+    names(geneList) <- AnnotationDbi::mapIds(org.Mm.eg.db, keys = names(geneList),
+           column = "ENTREZID", keytype = "SYMBOL")
+  
+    geneList <- geneList[!is.na(names(geneList))]
+})
+
+names(geneList) <- names(deg.ca)
+str(geneList)
+
+# Halmark (C2, C7)
+m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% 
+  dplyr::select(gs_name, entrez_gene)
+
+ck <- compareCluster(geneCluster = geneList, fun = GSEA, 
+                     TERM2GENE = m_t2g, pvalueCutoff = 0.05)  
+
+head(ck) 
+dotplot(ck, label_format = 50, size = "count", color = "NES", showCategory = 20)  +
+  scale_fill_gradient(na.value = NA) + 
+  ylab("") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ck <- setReadable(ck, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+cnetplot(ck)
+
+```
+
+### 
+
+Running HALLMARK GSEA per cluster
+
+
+```{r}
+# Select DEG 
+deg.ca <- lapply(1:length(celltype.unique), function(n){
+  WTvsCD1dKO.ca.de[[n]] #%>% 
+  # filter(p_val_adj < 0.05 & (avg_log2FC) > 0.5)
+  })
+names(deg.ca) <- names(WTvsCD1dKO.ca.de)
+```
+
+
+
+```{r}
+
+deg.ca <- WTvsCD1dKO.ca.de
+
+em <- lapply(1:length(celltype.unique), function(i){
+      # Order by logFC
+    geneList <- deg.ca[[i]][,"avg_log2FC"]
+    names(geneList) <- rownames(deg.ca[[i]])
+    geneList <- sort(geneList, decreasing = T)
+    
+    # Change to gene ID
+    names(geneList) <- AnnotationDbi::mapIds(org.Mm.eg.db, keys = names(geneList),
+           column = "ENTREZID", keytype = "SYMBOL")
+    geneList <- geneList[!is.na(names(geneList))]
+    
+    # Pathway enrichment with KEGG db
+      # em <- enricher(names(geneList), TERM2GENE=m_t2g)
+      em2 <- GSEA(geneList, TERM2GENE = m_t2g, pvalueCutoff = 0.05)
+})
+
+names(em) <- names(deg.ca)
+lapply(1:length(celltype.unique), function(i){head(em[[i]])})
+
+empty <-lapply(1:length(celltype.unique), function(i){head(em[[i]]) %>% nrow() }) 
+em <- em[which(empty != 0)]
+
+em1 <-  setReadable(em$Micro, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+cnetplot(em1)
+
+# Dot plot
+pdf(here::here("output/figs/hallmark_CD1dvsWT_CA.pdf"), width = 18, height = 15)
+ dot <- lapply(1:length(em), function(i){
+  dotplot(em[[i]], showCategory=10, title = names(em)[i], label_format = 20, size = "setSize", color = "NES") +
+  scale_fill_gradient(na.value = NA) 
+})
+gridExtra::grid.arrange(grobs = dot)
+dev.off()
+
+# Upset
+pdf(here::here("output/figs/hallmark_upset_CD1dvsWT_CA.pdf"), width = 25, height = 10)
+upset <- lapply(1:length(em), function(i){
+  enrichplot::upsetplot(em[[i]], n = 8) + ggtitle(names(em)[i])
+})
+gridExtra::grid.arrange(grobs = upset)
+dev.off()
+
+# GSEA plots
+pdf(here::here("output/figs/hallmark_gsva_CD1dvsWT_CA_unhashed.pdf"), width =8, height = 5)
+lapply(1:length(em), function(i){
+  enrichplot::gseaplot2(em[[i]], 
+                        geneSetID = 1, 
+                        title = str_c(em[[i]]$Description[1], " in ", names(em)[i]))
+})
+dev.off()
+
+enrichplot::gseaplot2(em[["Inh"]], 
+                        geneSetID = 1:4, color = c("#848484","black","grey", "red"))  
+
+
+enrichplot::gseaplot2(em[["Micro"]], 
+                        geneSetID = 1:6, color = c("black", "#636363",  "#909090", "#B4B4B4","red", "#D4D4D4"))
+
+
+
+```
