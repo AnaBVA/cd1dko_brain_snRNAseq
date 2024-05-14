@@ -75,7 +75,7 @@ scCustomize::Clustered_DotPlot(seurat_object = seurat,
                                group.by = "Level_4", flip = F
                                ) 
 
-write_excel_csv(seurat.markers, here::here("output/tables/4_markers_Level_4.xls"))
+openxlsx::write.xlsx(seurat.markers, here::here("output/tables/4_markers_Level_4.xlsx"))
 saveRDS(seurat, here::here("output/rds/4_seurat_SCTnorm.RDS"))
 
 ```
@@ -113,7 +113,7 @@ Using FindConservedMarkers
 # 
 # DoHeatmap(seurat, features = top2.conserved$gene) + NoLegend()
 # 
-# write_excel_csv(conserved_markers, here::here("output/tables/3_conserved_markers_Level_4_2024-04-23.RDS"))
+# openxlsx::write.xlsx(conserved_markers, here::here("output/tables/3_conserved_markers_Level_4_2024-04-23.RDS"))
 ```
 
 
@@ -133,7 +133,6 @@ DimPlot(seurat,
         group.by  = "Level_4") & NoAxes()  +
   theme(legend.position = "top")
 ```
-
 
 
 # Literature based markers
@@ -342,4 +341,39 @@ dittoHeatmap(seurat,
              annot.by = c("RNA_snn_res.0.2", "condition"))
 
 ```
+
+
+Final plot for the paper
+
+```{r}
+markers <- c(
+  "Grin2b", "Meg3", # excitatory neurons
+  "Gad1", "Gad2", # inhibitory neurons
+  "Mog", "Mbp", # oligodendrocytes
+  "Gfap", "Slc1a2", # astrocytes
+  "Cx3cr1" ,"C1qb", # microglia; 
+  "Vcan", "Pdgfra", # oligodendrocyte precursor cells (OPC)
+  "Sox11", "Ccnd2", # neuroblasts
+  "Prlr", "Ttr", # choroid plexus epithelium
+  "Tuba1a", "Ccdc153",  #  ependymal cells  
+  "Flt1", "Pecam1", # endothelial
+  "Flrt2", "Bicc1" # perivascular fibroblast 
+) %>% 
+  unique()
+
+
+scCustomize::Clustered_DotPlot(seurat_object = seurat, cluster_feature = F,
+                               features = markers,  x_lab_rotate = 90,
+                               group.by = "Level_2", flip = F
+                               ) 
+
+
+scCustomize::Clustered_DotPlot(seurat_object = seurat, cluster_feature = F,
+                               features = markers,  x_lab_rotate = 90,
+                               group.by = "Level_4", flip = F
+                               ) 
+
+```
+
+
 

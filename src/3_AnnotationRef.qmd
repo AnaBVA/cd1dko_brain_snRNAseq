@@ -166,18 +166,24 @@ seurat@meta.data$Level_4 <- metadata_tmp$Level_4 %>% factor(. , levels = brain_l
 
 seurat <- AddMetaData(seurat, metadata = seurat@meta.data[, c("celltype", "Level_1", "Level_2", "Level_3", "Level_4")])
 
+# TSNE
+DimPlot(seurat, label = F,  cols = rev(ghibli::ghibli_palettes$LaputaMedium),
+        group.by  = "Level_1",  reduction = "tsne",
+       ) & NoAxes() +
+  theme(legend.position = "none")  
+
 DimPlot(seurat, label = T,
-        group.by  = "Level_2", 
+        group.by  = "Level_2",  reduction = "tsne",
        ) & NoAxes() +
   theme(legend.position = "none")
 
 DimPlot(seurat, label = T,
-        group.by  = "Level_3", 
+        group.by  = "Level_3",  reduction = "tsne",
        ) & NoAxes() +
   theme(legend.position = "none")
 
 DimPlot(seurat, label = T,
-        group.by  = "Level_4", 
+        group.by  = "Level_4",  reduction = "tsne",
        ) & NoAxes() +
   theme(legend.position = "none")
 ```
@@ -185,8 +191,10 @@ DimPlot(seurat, label = T,
 
 
 ```{r}
+DimPlot(seurat, reduction = "tsne", group.by = "Level_1") + NoAxes() + ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) 
+
 # prediction celltypes
-dittoSeq::dittoBarPlot(seurat,"Level_1", group.by = "condition", legend.show = F) +ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) +
+dittoSeq::dittoBarPlot(seurat,"Level_1", group.by = "mouse", legend.show = F) +ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) +
 dittoSeq::dittoBarPlot(seurat,"Level_1", group.by = "id", retain.factor.levels = T) +
   ghibli::scale_fill_ghibli_d("LaputaMedium", direction = -1) 
 
@@ -200,7 +208,6 @@ dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "id", retain.factor.levels =
 
 dittoFreqPlot(seurat, "Level_2",
     sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
-
 
 dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "condition", legend.show = F) +
 dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "id", retain.factor.levels = T) 
