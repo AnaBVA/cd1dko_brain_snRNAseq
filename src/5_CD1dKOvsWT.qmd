@@ -85,10 +85,12 @@ volcano.ca.plot <- function(n, df = wt.de, cond = "CA", ...){
   cd1d <- cells %>% filter(mouse == "CD1d")
   num.de <- df.de %>% filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5) %>% nrow()
   
+  gene_names <- rownames(df.de)
   EnhancedVolcano(df.de, 
                   title = str_c(cond ,": ", celltype.unique[n], "-", num.de, " DEG"), 
                   subtitle = str_c("<- WT: ",wt[, "Freq"],  "  |  ", cd1d[, "Freq"],  ":CD1d ->"),
-                  lab = rownames(df.de), 
+                  # lab = rownames(df.de), 
+                  lab = paste0("italic('", gene_names, "')"), parse = T,
                   pCutoff = 0.05, FCcutoff = 0.5,
                   x = 'avg_log2FC', drawConnectors = T,
                   y = 'p_val_adj', 
@@ -107,9 +109,10 @@ names(WTvsCD1dKO.ca.de) <- celltype.unique
 # Violin plot per cluster
 vp <- lapply(1:length(celltype.unique), volcano.ca.plot, df = WTvsCD1dKO.ca.de, cond = "CA")
 
-pdf(here::here("output/figs/volcano_CD1dvsWT_CA.pdf"), width = 18, height = 25)
+pdf(here::here("output/figs/volcano_CD1dvsWT_CA.pdf"), width = 19, height = 27)
 gridExtra::grid.arrange(grobs = vp)
 dev.off()
+
 
 # Get statistically significant DEGs
 DEG <-  lapply(1:length(celltype.unique), function(n){WTvsCD1dKO.ca.de[[n]] %>% 
@@ -136,14 +139,16 @@ WTvsCD1dKO.ca.de$Micro$ifng_res <- "no"
 WTvsCD1dKO.ca.de$Micro[ifn_res$gene_symbol,]$ifng_res <- "IFNGresponse"
 
 volcano.ca.plot(7, df = WTvsCD1dKO.ca.de, cond = "CA", colCustom = "ifng_res")
+gene_names <- rownames(WTvsCD1dKO.ca.de$Micro)
+ifn_genes <- c("Tnf",ifn_res$gene_symbol, gene_names[1:20])
+
 EnhancedVolcano(WTvsCD1dKO.ca.de$Micro, 
                   #title = str_c(cond ,": ", celltype.unique[n], "-", num.de, " DEG"), 
                   #subtitle = str_c("<- WT: ",wt[, "Freq"],  "  |  ", cd1d[, "Freq"],  ":CD1d ->"),
-                  lab = rownames(WTvsCD1dKO.ca.de$Micro), 
-                  pCutoff = 0.05, FCcutoff = 0.5,
-                  x = 'avg_log2FC', drawConnectors = T,  
-                selectLab = c("Tnf",ifn_res$gene_symbol, rownames(WTvsCD1dKO.ca.de$Micro)[1:20]), 
-                labSize = 6,
+                  lab = paste0("italic('", gene_names, "')"), 
+                  selectLab = paste0("italic('", ifn_genes, "')"), 
+                  pCutoff = 0.05, FCcutoff = 0.5, parse = T,
+                  x = 'avg_log2FC', drawConnectors = T,   labSize = 6,
                   y = 'p_val_adj',# colCustom = "ifng_res",
                   ylab = bquote(~-Log[10] ~ italic(P.adj))) 
 
@@ -176,6 +181,11 @@ df.levels <- table(seurat$Level_1, seurat$Level_2) %>%
   mutate(Var2 = gsub("_", ".",Var2))
 
 colnames(df.levels) <- c("Level_1", "celltype", "num_cells")
+
+num.de.ca %>% 
+  left_join(df.levels, by = "celltype") %>% 
+  mutate(celltype = factor(celltype, levels = celltype)) %>% 
+  write_excel_csv(here::here("output/tables/DEG_level1.csv"))
 
 num.de.ca %>% 
   left_join(df.levels, by = "celltype") %>% 
@@ -236,6 +246,8 @@ names(geneList) <- names(deg.ca)
 str(geneList)
 
 # Halmark (C2, C7)
+
+
 m_t2g <- msigdbr(species = "Mus musculus", category = "H") %>% 
   dplyr::select(gs_name, entrez_gene)
 
@@ -243,13 +255,51 @@ ck <- compareCluster(geneCluster = geneList, fun = GSEA,
                      TERM2GENE = m_t2g, pvalueCutoff = 0.05)  
 
 head(ck) 
-dotplot(ck, label_format = 50, size = "count", color = "NES", showCategory = 20)  +
-  scale_fill_gradient(na.value = NA) + 
+dotplot(ck, label_format = 50, size = "count", color = "NES", showCategory = 20) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limits = c(-3.3, 3.3)) +
   ylab("") + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 ck <- setReadable(ck, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
 cnetplot(ck)
+
+ck_df <- as.data.frame(ck)
+ck_df$Count <- str_count(ck_df$core_enrichment, "/")
+
+pathway_freq <- ck_df %>%
+  group_by(Description) %>%
+  summarise(NumClusters = n_distinct(Cluster)) 
+
+ck_df <- ck_df %>% 
+  full_join(pathway_freq, by = "Description") %>% 
+  arrange(NumClusters, Cluster, Count) 
+
+# openxlsx::write.xlsx(ck_df, here::here("output/tables/compareGSEA_Hallmark.xlsx"))
+ck_df <- openxlsx::read.xlsx(here::here("output/tables/compareGSEA_Hallmark.xlsx"))
+
+# Function to convert ENTREZ IDs to gene symbols
+convert_entrez_to_symbol <- function(entrez_string) {
+  entrez_ids <- unlist(strsplit(entrez_string, "/"))  # Split ENTREZ IDs by "/"
+  gene_symbols <- mapIds(org.Mm.eg.db, keys = entrez_ids, 
+                         column = "SYMBOL", keytype = "ENTREZID", 
+                         multiVals = "first")  # Convert to gene symbols
+  return(paste(gene_symbols, collapse = "/"))  # Combine gene symbols into a single string
+}
+
+# Apply the conversion to each row and create a new column with gene symbols
+ck_df$core_symbol <- sapply(ck_df$core_enrichment, convert_entrez_to_symbol)
+openxlsx::write.xlsx(ck_df, here::here("output/tables/compareGSEA_Hallmark_fig.xlsx"))
+
+ck_df %>% 
+  mutate(ID = factor(ID, levels = unique(ID)),
+         Cluster = as.factor(as.character(Cluster))) %>% 
+  ggplot(aes(x = Cluster, y =  ID, size = Count, color = NES)) +
+  geom_point() +
+  scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limits = c(-3.3, 3.3)) +
+  scale_size_continuous(range = c(3, 8), breaks = c(25, 50,75)) +
+  ylab("") + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 
 ```
 
@@ -270,11 +320,13 @@ names(deg.ca) <- names(WTvsCD1dKO.ca.de)
 
 
 ```{r}
+library(clusterProfiler)
 
 deg.ca <- WTvsCD1dKO.ca.de
 
 em <- lapply(1:length(celltype.unique), function(i){
       # Order by logFC
+  print(celltype.unique[i])
     geneList <- deg.ca[[i]][,"avg_log2FC"]
     names(geneList) <- rownames(deg.ca[[i]])
     geneList <- sort(geneList, decreasing = T)
@@ -287,6 +339,13 @@ em <- lapply(1:length(celltype.unique), function(i){
     # Pathway enrichment with KEGG db
       # em <- enricher(names(geneList), TERM2GENE=m_t2g)
       em2 <- GSEA(geneList, TERM2GENE = m_t2g, pvalueCutoff = 0.05)
+      if (nrow(em2@result) > 0) {
+  em2@result$core_symbol <- sapply(em2$core_enrichment, convert_entrez_to_symbol)
+        } else {
+      message("Skipping conversion because no core_enrichment values are greater than 0.")
+        }
+      return(em2)
+
 })
 
 names(em) <- names(deg.ca)
@@ -332,5 +391,7 @@ enrichplot::gseaplot2(em[["Micro"]],
                         geneSetID = 1:6, color = c("black", "#636363",  "#909090", "#B4B4B4","red", "#D4D4D4"))
 
 
+openxlsx::write.xlsx(em$Inh@result, here::here("output/tables/gsea_inhibitory_neu.xlsx"))
+openxlsx::write.xlsx(em$Micro@result, here::here("output/tables/gsea_microglia.xlsx"))
 
 ```

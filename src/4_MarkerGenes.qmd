@@ -360,16 +360,20 @@ markers <- c(
   "Flrt2", "Bicc1" # perivascular fibroblast 
 ) %>% 
   unique()
+# paste0("italic('", gene_names, "')"), parse = T
 
 
 scCustomize::Clustered_DotPlot(seurat_object = seurat, cluster_feature = F,
-                               features = markers,  x_lab_rotate = 90,
+                               features = markers,
+                               row_label_fontface = "italic",
+                               x_lab_rotate = 90,
                                group.by = "Level_2", flip = F
                                ) 
 
 
 scCustomize::Clustered_DotPlot(seurat_object = seurat, cluster_feature = F,
                                features = markers,  x_lab_rotate = 90,
+                               row_label_fontface = "italic",
                                group.by = "Level_4", flip = F
                                ) 
 

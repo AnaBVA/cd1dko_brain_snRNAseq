@@ -202,25 +202,27 @@ dittoFreqPlot(seurat, "Level_1",
     sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
 
 # prediction celltypes
-dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "condition", legend.show = F) +
-dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "id", retain.factor.levels = T) +
-  geom_vline(xintercept = c( 2.5), lwd = 1, color="black")
+dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "mouse", legend.show = F) +
+dittoSeq::dittoBarPlot(seurat,"Level_2", group.by = "id", retain.factor.levels = T) 
 
 dittoFreqPlot(seurat, "Level_2",
     sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
 
-dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "condition", legend.show = F) +
+dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "mouse", legend.show = F) +
 dittoSeq::dittoBarPlot(seurat,"Level_3", group.by = "id", retain.factor.levels = T) 
 
 dittoFreqPlot(seurat, "Level_3",
     sample.by = "id", group.by = "condition", split.adjust = list(scales = "free") )
 
-dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = F) +
-dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = T, scale = "count") 
+
+seurat$Level_4 <- factor(as.character(seurat$Level_4), 
+                         levels = gtools::mixedsort(levels(seurat$Level_4)))
+
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "mouse", legend.show = F, retain.factor.levels = T, ) +
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "id", retain.factor.levels = T)
 
 dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = F) +
-dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "id", retain.factor.levels = T) +
-  geom_vline(xintercept = c( 2.5), lwd = 1, color="black")
+dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "condition", legend.show = T, scale = "count") 
 
 dittoSeq::dittoBarPlot(seurat,"Level_4", group.by = "id", legend.show = F,
                        retain.factor.levels = T, scale = "count") +

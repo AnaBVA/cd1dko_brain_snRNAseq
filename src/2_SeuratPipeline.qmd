@@ -264,6 +264,27 @@ seurat <- ScaleData(seurat)
 ```
 
 
+# Higlhy variable features by samples
+
+```{r}
+seurat.list <- SplitObject( seurat , split.by = "id")
+
+# seurat.list <- SplitObject(seurat, split.by = "condition")
+seurat.list <- lapply(X = seurat.list, FUN = function(x) {
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+    top10 <- head(VariableFeatures(x), 10)
+    plot1 <- VariableFeaturePlot(x)
+    print(LabelPoints(plot = plot1, points = top10, repel = TRUE,  fontface = "italic"))
+})
+
+features <- SelectIntegrationFeatures(object.list = seurat.list)
+VariableFeatures(seurat) <- features
+top10 <- head(features, 10)
+
+```
+
+
 # Dimentional reduction
 
 ```{r}
